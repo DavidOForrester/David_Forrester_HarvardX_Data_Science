@@ -11,10 +11,12 @@ library(pracma)
 library(MASS)
 library(tseries)
 library(forecast)
+library(tsfknn)
 
 if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
 if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(tsfknn)) install.packages("tsfknn")
 
 # relative path to file
 file <- ("aapl.us.txt")
@@ -63,6 +65,7 @@ naive_rmse <- RMSE(aapl_test$Close, aapl_test$PrevClose)
 
 rmse_results <- data_frame(method = "Previous Value Prediction", RMSE = naive_rmse)
 rmse_results %>% knitr::kable()
+rmse_results
 
 # Range of moving averages to test
 windows <- seq(2, 20, 1)
@@ -99,11 +102,31 @@ naive_rmse <- RMSE(aapl_test$Close, aapl_test$MovingAvg)
 rmse_results <- bind_rows(rmse_results,
                           data_frame(method="Moving Average Prediction",  
                                      RMSE = naive_rmse))
+rmse_results
 
+# Setting the first value of the Close
+KnnClose <- aapl[7946,]$Close
 
+# Looping over the Close prices and predicting the next one in the sequence
+for (n in seq(1, 416, 1)) {
+  PredKnn <- knn_forecasting(aapl[1:7946 + n,]$Close, h = 1, lags = 1:2, k = 2)
+  KnnClose <- append(KnnClose, PredKnn$prediction)
+}
 
+# plot of the results
+plot(KnnClose)
 
+# adding the results to the actual close price for validation
+df <- data.frame(aapl_test$Close, KnnClose)
 
+# RMSE 
+naive_rmse <- RMSE(df$aapl_test.Close, df$KnnClose)
+
+# Adding to the RMSE results
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="KNN Prediction",  
+                                     RMSE = naive_rmse))
+rmse_results
 
 # prediction using ARIMA setting the close to log
 LnClose = log(aapl_train$Close)
@@ -119,7 +142,6 @@ pacf(LnClose, lag.max = 20)
 CloseArima <- ts(LnClose, start = c(1984, 09), frequency = 365)
 FitCloseLn <- auto.arima(CloseArima)
 FitCloseLn
-plot(CloseArima, type = 'l')
 exp(LnClose)
 
 # forecast out the close price for the duration of the test data
