@@ -1,5 +1,5 @@
 ---
-title: "Project_Report"
+title: "Choose You Own Project"
 author: "David Forrester"
 date: "23/12/2019"
 output: word_document
@@ -9,22 +9,294 @@ output: word_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# Overview
+This project will look into the total stock price data for apple from listing on the stock exchange in 1985 to 2018. 4 different methods will be used to attempt to predict and forecast the close price each day. The data will be split into a training and test set for training and validating the methods. 
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+A root mean square error calculation will be used to assess the performance of the predictions with a goal of returning the smallest value. 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+$$ RMSE = \sqrt{\frac{1}{N}\displaystyle\sum_{u,i} (\hat{y}_{u,i}-y_{u,i})^{2}} $$
 
-```{r cars}
-summary(cars)
+\pagebreak
+
+## Dataset
+The dataset is loaded into r as a comma separated value type from the git repo. This data is then split into a training and test set of 95% to 5%. 
+
+``` {r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(rvest)
+library(XML)
+library(tidytext)
+library(wordcloud)
+library(dslabs)
+library(caret)
+library(pracma)
+library(MASS)
+library(tseries)
+library(forecast)
+library(tsfknn)
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(tsfknn)) install.packages("tsfknn")
+
+# relative path to file
+file <- ("aapl.us.txt")
+
+# Read csv file into environment
+aapl <- read_csv(file)
+
+# Split the data set by date ranges 80% train 20% test
+aapl_train <- aapl[1:round(nrow(aapl) * 0.95),]
+aapl_test <- na.omit(aapl[round(nrow(aapl) * 0.95) + 1:nrow(aapl),])
 ```
 
-## Including Plots
+\pagebreak
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+# Methods and Analysis
+## Data Analysis
+The first 6 rows and the summary below of the training dataset give insight into the structure of the data. It can be seen that each row represents a day of trading for the apple stock with the open, close, volume and intraday prices. 
+``` {r, echo = FALSE}
+head(aapl_train)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+``` {r, echo = FALSE}
+summary(aapl_train)
+```
+
+\pagebreak
+
+## Modelling Approach
+
+``` {r, echo = FALSE}
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+\pagebreak
+
+### Model 1: Previous Close
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+aapl_train %>%
+  ggplot() +
+  geom_line(aes(Date, Close))
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+aapl_test %>%
+  ggplot() +
+  geom_line(aes(Date, Close))
+```
+
+
+
+```{r, echo = TRUE}
+aapl_test <- mutate(aapl_test, PrevClose = lag(Close))
+aapl_test <- na.omit(aapl_test)
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+aapl_test %>%
+  ggplot(aes(x = Date)) +
+  geom_line(aes(y = Close), colour = "black") +
+  geom_line(aes(y = PrevClose), colour = "red")
+```
+
+
+
+```{r, echo = TRUE}
+naive_rmse <- RMSE(aapl_test$Close, aapl_test$PrevClose)
+
+rmse_results <- data_frame(method = "Previous Value Prediction", RMSE = naive_rmse)
+rmse_results
+```
+
+\pagebreak
+
+### Model 2: Moving Average
+
+
+```{r, echo = TRUE}
+windows <- seq(2, 20, 1)
+```
+
+
+
+```{r, echo = TRUE}
+RMSEs <- sapply(windows, function(w){
+  
+  aapl_train <- mutate(aapl_train, MovingAvg = movavg(aapl_train$Close, w, type=c("s")))
+  
+  return(RMSE(aapl_train$Close, aapl_train$MovingAvg))
+})
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+qplot(windows, RMSEs)
+```
+
+
+
+```{r, echo = TRUE}
+best_window <- windows[which.min(RMSEs)]
+best_window
+```
+
+
+
+```{r, echo = TRUE}
+aapl_test <- mutate(aapl_test, MovingAvg = movavg(aapl_test$Close, best_window, type=c("s")))
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+aapl_test %>%
+  ggplot(aes(x = Date)) +
+  geom_line(aes(y = Close), colour = "black") +
+  geom_line(aes(y = PrevClose), colour = "red") +
+  geom_line(aes(y = MovingAvg), colour = "green")
+```
+
+
+
+```{r, echo = TRUE}
+naive_rmse <- RMSE(aapl_test$Close, aapl_test$MovingAvg)
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="Moving Average Prediction",  
+                                     RMSE = naive_rmse))
+rmse_results
+```
+
+\pagebreak
+
+### Model 3: KNN Forecasting
+
+
+```{r, echo = TRUE}
+KnnClose <- aapl[7946,]$Close
+```
+
+
+
+```{r, echo = TRUE}
+for (n in seq(1, 416, 1)) {
+  PredKnn <- knn_forecasting(aapl[1:7946 + n,]$Close, h = 1, lags = 1:2, k = 2)
+  KnnClose <- append(KnnClose, PredKnn$prediction)
+}
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+plot(KnnClose)
+```
+
+
+
+```{r, echo = TRUE}
+df <- data.frame(aapl_test$Close, KnnClose)
+naive_rmse <- RMSE(df$aapl_test.Close, df$KnnClose)
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="KNN Prediction",  
+                                     RMSE = naive_rmse))
+rmse_results
+```
+
+
+\pagebreak
+
+### Model 4: ARIMA
+
+
+```{r, echo = TRUE}
+LnClose = log(aapl_train$Close)
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+acf(LnClose, lag.max = 20)
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+pacf(LnClose, lag.max = 20)
+```
+
+
+
+```{r, echo = TRUE}
+CloseArima <- ts(LnClose, start = c(1984, 09), frequency = 365)
+FitCloseLn <- auto.arima(CloseArima)
+FitCloseLn
+```
+
+
+
+```{r, echo = TRUE, fig.height=3, fig.width=5}
+ForecastValueLn = forecast(FitCloseLn, h = 417)
+plot(ForecastValueLn)
+```
+
+
+
+```{r, echo = TRUE}
+ForecastValuesExtracted = as.numeric(ForecastValueLn$mean)
+FinalForecastValues = exp(ForecastValuesExtracted)
+```
+
+
+
+```{r, echo = TRUE}
+df <- data.frame(aapl_test$Close, FinalForecastValues)
+naive_rmse <- RMSE(df$aapl_test.Close, df$FinalForecastValues)
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="ARIMA Prediction",  
+                                     RMSE = naive_rmse))
+rmse_results
+```
+
+
+\pagebreak
+
+# Results
+
+
+# Conclusion
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
