@@ -1,5 +1,5 @@
 ---
-title: "Choose You Own Project"
+title: "HarvardX - Data Science - Choose You Own Project"
 author: "David Forrester"
 date: "23/12/2019"
 output: word_document
@@ -19,7 +19,7 @@ $$ RMSE = \sqrt{\frac{1}{N}\displaystyle\sum_{u,i} (\hat{y}_{u,i}-y_{u,i})^{2}} 
 \pagebreak
 
 ## Dataset
-The dataset is loaded into r as a comma separated value type from the git repo. This data is then split into a training and test set of 95% to 5%. 
+The dataset is loaded into r as a comma separated value type from the git repo. This data is then split into a training and test set of 95% to 5%. There is no random split between the data set as it is a time series and therefore the previous rows are highly important in determining the next. 
 
 ``` {r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
 library(tidyverse)
@@ -53,34 +53,22 @@ aapl_train <- aapl[1:round(nrow(aapl) * 0.95),]
 aapl_test <- na.omit(aapl[round(nrow(aapl) * 0.95) + 1:nrow(aapl),])
 ```
 
-\pagebreak
 
 # Methods and Analysis
 ## Data Analysis
-The first 6 rows and the summary below of the training dataset give insight into the structure of the data. It can be seen that each row represents a day of trading for the apple stock with the open, close, volume and intraday prices. 
+The first 6 rows and the summary below give insight into the structure of the data. It can be seen that each row represents a day of trading for the apple stock with the open, close, volume and intraday prices. 
+
 ``` {r, echo = FALSE}
 head(aapl_train)
 ```
 
+Looking at the summary of the training data set it can be seen that there is no missing data.
 
 ``` {r, echo = FALSE}
 summary(aapl_train)
 ```
 
-\pagebreak
-
-## Modelling Approach
-
-``` {r, echo = FALSE}
-RMSE <- function(true_ratings, predicted_ratings){
-  sqrt(mean((true_ratings - predicted_ratings)^2))
-}
-```
-
-\pagebreak
-
-### Model 1: Previous Close
-
+Below is a plot of the training data set over time allowing for the trend to be easily seen. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 aapl_train %>%
@@ -88,7 +76,9 @@ aapl_train %>%
   geom_line(aes(Date, Close))
 ```
 
+\pagebreak
 
+The below trend is of the test data which the models below hope to predict. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 aapl_test %>%
@@ -96,14 +86,27 @@ aapl_test %>%
   geom_line(aes(Date, Close))
 ```
 
+\pagebreak
 
+## Modelling Approach
+The modelling approaches in this project will be assessed on their root mean square error to determine the most successful model. The goal will be to return the smallest RMSE when comparing the predictions with the testing data set.  
+
+``` {r, echo = FALSE}
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+
+### Model 1: Previous Close
+The first modelling approach is to simply use the previous close value as the prediction for the current close value. This is typically used as a starting point for comparing future models when looking at stock prices.
 
 ```{r, echo = TRUE}
 aapl_test <- mutate(aapl_test, PrevClose = lag(Close))
 aapl_test <- na.omit(aapl_test)
 ```
 
-
+Below the test data set is plotted along with the previous value to give insight into the modelling approach. As it can be seen this approach lags the actual value and is therefore very unlikely to match up. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 aapl_test %>%
@@ -112,7 +115,7 @@ aapl_test %>%
   geom_line(aes(y = PrevClose), colour = "red")
 ```
 
-
+Putting the actual and predicted values into the RMSE formula a results of 1.51 is returned. This will be used as a starting point and a baseline for comparing the other models. 
 
 ```{r, echo = TRUE}
 naive_rmse <- RMSE(aapl_test$Close, aapl_test$PrevClose)
@@ -124,13 +127,13 @@ rmse_results
 \pagebreak
 
 ### Model 2: Moving Average
-
+The next modelling approach is to use the moving average of previous close values to determine the next. when selecting a moving average typically a window (n) of previous values is selected. This can range from 2 to infinite. 
 
 ```{r, echo = TRUE}
 windows <- seq(2, 20, 1)
 ```
 
-
+Setting up a window between 2 and 20 at 1 value increments the resulting RMSE for the training data can be tested. 
 
 ```{r, echo = TRUE}
 RMSEs <- sapply(windows, function(w){
@@ -141,26 +144,23 @@ RMSEs <- sapply(windows, function(w){
 })
 ```
 
+The results are plotted below and as it can be seen the window of 2 gives the most accurate result. This is expected as the larger the window the less accurate the moving average becomes in terms of short term predictions and the better it becomes are predicting long term trends. 
 
+\pagebreak
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 qplot(windows, RMSEs)
 ```
 
-
+Taking this window and applying it to the test data is conducted below in this code. 
 
 ```{r, echo = TRUE}
 best_window <- windows[which.min(RMSEs)]
 best_window
-```
-
-
-
-```{r, echo = TRUE}
 aapl_test <- mutate(aapl_test, MovingAvg = movavg(aapl_test$Close, best_window, type=c("s")))
 ```
 
-
+Overlaid in green the new prediction for the close values can be seen. From the plot it can be determined that the moving average approach smooths out the sharpe predictions from the previous value model. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 aapl_test %>%
@@ -170,7 +170,7 @@ aapl_test %>%
   geom_line(aes(y = MovingAvg), colour = "green")
 ```
 
-
+The moving average model provides a significant improvement in the RMSE value as can be seen in the table below. 
 
 ```{r, echo = TRUE}
 naive_rmse <- RMSE(aapl_test$Close, aapl_test$MovingAvg)
@@ -183,28 +183,24 @@ rmse_results
 \pagebreak
 
 ### Model 3: KNN Forecasting
-
+This next method looks to use k nearest neighbours to predict the closing value. The approach has implemented a for loop to predict the next value in the sequence as using just the training data to predict 416 days out caused issues with the scaling. This came in the form of the predictions not exceeding 110 as values higher than this aren't experienced in the training data set. 
 
 ```{r, echo = TRUE}
 KnnClose <- aapl[7946,]$Close
-```
 
-
-
-```{r, echo = TRUE}
 for (n in seq(1, 416, 1)) {
   PredKnn <- knn_forecasting(aapl[1:7946 + n,]$Close, h = 1, lags = 1:2, k = 2)
   KnnClose <- append(KnnClose, PredKnn$prediction)
 }
 ```
 
-
+The plot below shows the predicted values using the KNN model over the 417 days. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 plot(KnnClose)
 ```
 
-
+The KNN method returns a less than desirable RMSE score of 2.5. This is likely due to the stock trend of Apple continues upwards from bottom right to top left. There is therefore minimal repeating prices in the historical data used to predict the next value. 
 
 ```{r, echo = TRUE}
 df <- data.frame(aapl_test$Close, KnnClose)
@@ -219,25 +215,25 @@ rmse_results
 \pagebreak
 
 ### Model 4: ARIMA
-
+The final model used to predict the is auto regressive integrated moving average or also known as ARIMA. This is very commonly used in time series forecasting and should therefore fit the use case well. 3 parameters are used to tune the model however, in this case auto ARIMA will be used to determine p, q and d.
 
 ```{r, echo = TRUE}
 LnClose = log(aapl_train$Close)
 ```
 
-
+From the plot below it can be seen that the Auto - correlation function for the time series is highly correlated even out to a lag of 20 previous values. The 2 plots allow for a deeper understanding of the time series and whether it is more auto regressive or moving average and which order to use them in. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 acf(LnClose, lag.max = 20)
 ```
 
-
+From the plots above and below it can be determined that the apple stock price time series is more auto regressive. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 pacf(LnClose, lag.max = 20)
 ```
 
-
+The next step is to set the starting point and the frequency of the predictions. The close price is then pasted into the auto ARIMA function.
 
 ```{r, echo = TRUE}
 CloseArima <- ts(LnClose, start = c(1984, 09), frequency = 365)
@@ -245,21 +241,24 @@ FitCloseLn <- auto.arima(CloseArima)
 FitCloseLn
 ```
 
-
+A forecast can then be generated and forecast out for the range of the testing data set. 
 
 ```{r, echo = TRUE, fig.height=3, fig.width=5}
 ForecastValueLn = forecast(FitCloseLn, h = 417)
 plot(ForecastValueLn)
 ```
 
+\pagebreak
 
+As it can be seen in the above and below charts the forecast is very linear and will therefore likely return a poor RMSE.
 
 ```{r, echo = TRUE}
 ForecastValuesExtracted = as.numeric(ForecastValueLn$mean)
 FinalForecastValues = exp(ForecastValuesExtracted)
+plot(FinalForecastValues)
 ```
 
-
+This is confirmed when the ARIMA forecast data is compared to the actual test data. This is due to ARIMA being great for determining the trend of the stock price, however, not the day to day fluctuations. 
 
 ```{r, echo = TRUE}
 df <- data.frame(aapl_test$Close, FinalForecastValues)
@@ -274,10 +273,14 @@ rmse_results
 \pagebreak
 
 # Results
+The results below present the RMSE for the 4 different modelling approaches used to attempt to predict the future values of the apple stock price. 
 
+```{r, echo = TRUE}
+rmse_results
+```
 
 # Conclusion
-
+Overall the moving average prediction model was the most accurate and would therefore be used to build upon in future investigation. Further improvements could be to use linear regression and even incorporate the other columns into the model such as the range of prices which the stock traded in the day or the volume of stock traded. 
 
 
 
